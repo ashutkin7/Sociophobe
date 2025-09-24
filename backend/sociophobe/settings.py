@@ -37,9 +37,7 @@ ALLOWED_HOSTS = []
 from datetime import timedelta
 
 REST_FRAMEWORK = {
-    'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-    ),
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 AUTH_USER_MODEL = 'accounts.Users'
@@ -69,6 +67,8 @@ INSTALLED_APPS = [
     'core',
     'django_rest_passwordreset',
     'captcha',
+    'drf_spectacular',
+    'surveys',
 ]
 
 MIDDLEWARE = [

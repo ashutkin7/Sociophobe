@@ -4,6 +4,7 @@ from django.contrib.auth.hashers import make_password, check_password
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 
 from accounts.models import Users
+from surveys.models import Surveys, Questions, SurveyQuestions, RespondentAnswers
 
 class Characteristics(models.Model):
     characteristic_id = models.AutoField(primary_key=True)
@@ -33,47 +34,6 @@ class RespondentCharacteristics(models.Model):
         db_table = 'respondent_characteristics'
         unique_together = (('user', 'characteristic_value'),)
 
-
-class Surveys(models.Model):
-    survey_id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=255)
-    creator = models.ForeignKey(Users, on_delete=models.CASCADE)
-    date_finished = models.DateTimeField(null=True, blank=True)
-    max_residents = models.IntegerField(null=True, blank=True)
-
-    class Meta:
-        managed = False
-        db_table = 'surveys'
-
-
-class Questions(models.Model):
-    question_id = models.AutoField(primary_key=True)
-    text_question = models.TextField()
-
-    class Meta:
-        managed = False
-        db_table = 'questions'
-
-
-class SurveyQuestions(models.Model):
-    survey_question_id = models.AutoField(primary_key=True)
-    survey = models.ForeignKey(Surveys, on_delete=models.CASCADE)
-    question = models.ForeignKey(Questions, on_delete=models.CASCADE)
-
-    class Meta:
-        managed = False
-        db_table = 'survey_questions'
-
-
-class RespondentAnswers(models.Model):
-    answer_id = models.AutoField(primary_key=True)
-    survey_question = models.ForeignKey(SurveyQuestions, on_delete=models.CASCADE)
-    respondent = models.ForeignKey(Users, on_delete=models.CASCADE)
-    text_answer = models.TextField()
-
-    class Meta:
-        managed = False
-        db_table = 'respondent_answers'
 
 
 class Dashboards(models.Model):

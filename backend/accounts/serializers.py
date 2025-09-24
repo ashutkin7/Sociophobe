@@ -1,22 +1,35 @@
 from rest_framework import serializers
-from .models import Users
-from django.contrib.auth.hashers import make_password
+from captcha.fields import CaptchaField
+from .models import Users   # подключаем вашу модель
 
-class RegisterSerializer(serializers.ModelSerializer):
+class UserRegistrationSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255)
+    email = serializers.EmailField()
+    role = serializers.ChoiceField(choices=[
+        ('respondent', 'Respondent'),
+        ('customer', 'Customer'),
+        ('moderator', 'Moderator')
+    ])
     password = serializers.CharField(write_only=True)
-
-    class Meta:
-        model = Users
-        fields = ['user_id','name','email','password','role']
+    captcha = CaptchaField()
 
     def create(self, validated_data):
+        # captcha уже провалидирована и не нужна для создания пользователя
+        validated_data.pop('captcha', None)   # ✅ безопасно
         password = validated_data.pop('password')
         user = Users(**validated_data)
         user.set_password(password)
         user.save()
         return user
 
-
-class LoginSerializer(serializers.Serializer):
+class UserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
+    captcha = CaptchaField()
+
+
+class UserChangePasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    old_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True)
+    captcha = CaptchaField()
