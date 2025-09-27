@@ -69,6 +69,7 @@ INSTALLED_APPS = [
     'captcha',
     'drf_spectacular',
     'surveys',
+    'AI',
 ]
 
 MIDDLEWARE = [
