@@ -11,7 +11,7 @@ class Characteristics(models.Model):
     name = models.CharField(max_length=255)
 
     class Meta:
-        managed = False
+        
         db_table = 'characteristics'
 
 
@@ -21,7 +21,7 @@ class CharacteristicValues(models.Model):
     value_text = models.CharField(max_length=255)
 
     class Meta:
-        managed = False
+        
         db_table = 'characteristic_values'
 
 
@@ -30,7 +30,7 @@ class RespondentCharacteristics(models.Model):
     characteristic_value = models.ForeignKey(CharacteristicValues, on_delete=models.CASCADE)
 
     class Meta:
-        managed = False
+        
         db_table = 'respondent_characteristics'
         unique_together = (('user', 'characteristic_value'),)
 
@@ -43,7 +43,6 @@ class Dashboards(models.Model):
     column_n = models.IntegerField()
 
     class Meta:
-        managed = False
         db_table = 'dashboards'
 
 
@@ -56,5 +55,5 @@ class Analytics(models.Model):
     data_diagram = models.TextField(null=True, blank=True)
 
     class Meta:
-        managed = False
+        
         db_table = 'analytics'

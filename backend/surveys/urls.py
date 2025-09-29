@@ -1,9 +1,9 @@
-# survey/urls.py
 from django.urls import path
 from .views import (
     SurveyCreateView, MySurveysView, QuestionCreateView, SurveyQuestionLinkView,
     SurveyQuestionsListView, RespondentAnswerView, SurveyAnswersView,
-    SurveyToggleStatusView, AvailableSurveysView
+    SurveyToggleStatusView, AvailableSurveysView,
+    SurveyRetrieveUpdateDeleteView, SurveyArchiveView, QuestionUpdateView, SurveyQuestionDeleteView
 )
 
 urlpatterns = [
@@ -16,4 +16,9 @@ urlpatterns = [
     path('<int:survey_id>/answers/', SurveyAnswersView.as_view(), name='survey-answers'),
     path('<int:survey_id>/status/', SurveyToggleStatusView.as_view(), name='survey-toggle-status'),
     path('available/', AvailableSurveysView.as_view(), name='survey-available'),
+    path('<int:survey_id>/', SurveyRetrieveUpdateDeleteView.as_view(), name='survey-get-update-delete'),
+    path('<int:survey_id>/archive/', SurveyArchiveView.as_view(), name='survey-archive'),
+    path('questions/<int:question_id>/', QuestionUpdateView.as_view(), name='question-update'),
+    path('questions/unlink/<int:question_id>/',
+         SurveyQuestionDeleteView.as_view(), name='survey-question-unlink'),
 ]

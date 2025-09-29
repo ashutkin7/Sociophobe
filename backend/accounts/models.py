@@ -1,8 +1,6 @@
 from django.db import models
-from django.contrib.auth.hashers import make_password, check_password
-
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.contrib.auth.models import BaseUserManager
+
 
 class UsersManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -27,15 +25,29 @@ class UsersManager(BaseUserManager):
         """Позволяет аутентифицировать по email"""
         return self.get(email=email)
 
+
 class Users(AbstractBaseUser, PermissionsMixin):
     user_id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=255)
     email = models.EmailField(unique=True)
-    role = models.CharField(max_length=100, choices=[
-        ('respondent', 'Respondent'),
-        ('customer', 'Customer'),
-        ('moderator', 'Moderator')
-    ])
+    role = models.CharField(
+        max_length=100,
+        choices=[
+            ('respondent', 'Respondent'),
+            ('customer', 'Customer'),
+            ('moderator', 'Moderator')
+        ]
+    )
+
+    # флаг завершённости профиля
+    is_profile_complete = models.BooleanField(
+        default=False,
+        help_text="Отмечает, завершил ли пользователь заполнение личного профиля"
+    )
+
+    # стандартные флаги для кастомной модели пользователя
+    is_active = models.BooleanField(default=True)
+    is_staff = models.BooleanField(default=False)
 
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['name', 'role']

@@ -1,4 +1,3 @@
-# survey/serializers.py
 from rest_framework import serializers
 from .models import Surveys, Questions, SurveyQuestions, RespondentAnswers
 from django.utils import timezone
@@ -14,10 +13,22 @@ class SurveyDetailSerializer(serializers.ModelSerializer):
         model = Surveys
         fields = ['survey_id', 'name', 'creator', 'date_finished', 'max_residents', 'status']
 
+class SurveyUpdateSerializer(serializers.ModelSerializer):
+    """Для PUT /api/surveys/{survey_id}/"""
+    class Meta:
+        model = Surveys
+        fields = ['name', 'date_finished', 'max_residents']
+
 class QuestionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Questions
         fields = ['question_id', 'text_question', 'type_question']
+
+class QuestionUpdateSerializer(serializers.ModelSerializer):
+    """PUT /api/surveys/questions/{question_id}/"""
+    class Meta:
+        model = Questions
+        fields = ['text_question', 'type_question']
 
 class SurveyQuestionLinkSerializer(serializers.ModelSerializer):
     class Meta:
@@ -35,33 +46,23 @@ class RespondentAnswerCreateSerializer(serializers.ModelSerializer):
         user = self.context['request'].user
         survey_question = data['survey_question']
 
-        # Проверка: профиль заполнен
         if not getattr(user, 'is_profile_complete', False):
             raise serializers.ValidationError("Profile incomplete — cannot participate in surveys.")
 
-        # Проверка: опрос активен и не закончился
         survey = survey_question.survey
         if not survey.is_active():
             raise serializers.ValidationError("Survey is not active or already finished.")
 
-        # Проверка: не превышен max_residents
         if survey.max_residents:
-            # считаем уникальных респондентов, ответивших на любой вопрос опроса
-            # (для скорости можно использовать RespondentAnswers.objects.filter(...).values('respondent').distinct().count())
-            from .models import RespondentAnswers
             respondents_count = RespondentAnswers.objects.filter(
                 survey_question__survey=survey
             ).values('respondent').distinct().count()
-            # Если пользователь уже в списке — ок (обновление), иначе увеличим счётчик
             if respondents_count >= survey.max_residents:
-                # но если этот пользователь уже отвечает, возможно allow update; здесь запрещаем новых
                 already_answered = RespondentAnswers.objects.filter(
                     survey_question__survey=survey, respondent=user
                 ).exists()
                 if not already_answered:
                     raise serializers.ValidationError("Survey reached max participants.")
-        # Проверка: дублирующий ответ на ту же привязку
-        from .models import RespondentAnswers
         if RespondentAnswers.objects.filter(survey_question=survey_question, respondent=user).exists():
             raise serializers.ValidationError("You already answered this question.")
         return data

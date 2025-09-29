@@ -1,31 +1,28 @@
-# survey/views.py
-from rest_framework import status, permissions
+from rest_framework import status, permissions, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer
+from drf_spectacular.utils import extend_schema, inline_serializer
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
+from django.db import models
+
 from .serializers import (
-    SurveyCreateSerializer, SurveyDetailSerializer, QuestionSerializer,
+    SurveyCreateSerializer, SurveyDetailSerializer, SurveyUpdateSerializer,
+    QuestionSerializer, QuestionUpdateSerializer,
     SurveyQuestionLinkSerializer, RespondentAnswerCreateSerializer
 )
 from .models import Surveys, Questions, SurveyQuestions, RespondentAnswers
-from django.shortcuts import get_object_or_404
-from rest_framework import serializers
-from django.utils import timezone
-from django.db import models
 
 tag = ['Опросы']
 
 def role_allowed(user, roles):
-    """Проверка роли пользователя."""
     return getattr(user, 'role', None) in roles
-
 
 class SurveyCreateView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
     @extend_schema(
         summary="Создать опрос",
-        description="Создание нового опроса (только для ролей customer или moderator).",
+        description="Создание нового опроса (customer/moderator).",
         request=SurveyCreateSerializer,
         responses={201: SurveyDetailSerializer},
         tags=tag
@@ -38,33 +35,106 @@ class SurveyCreateView(APIView):
         survey = serializer.save(creator=request.user, status='draft')
         return Response(SurveyDetailSerializer(survey).data, status=status.HTTP_201_CREATED)
 
-
 class MySurveysView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
-    @extend_schema(
-        summary="Мои опросы",
-        description="Получить список всех опросов, созданных текущим пользователем.",
-        responses={200: SurveyDetailSerializer(many=True)},
-        tags=tag
-    )
+    @extend_schema(summary="Мои опросы", responses={200: SurveyDetailSerializer(many=True)}, tags=tag)
     def get(self, request):
         qs = Surveys.objects.filter(creator=request.user)
         return Response(SurveyDetailSerializer(qs, many=True).data, status=status.HTTP_200_OK)
 
 
-class QuestionCreateView(APIView):
+class SurveyRetrieveUpdateDeleteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
+    @extend_schema(summary="Получение деталей опроса", responses={200: SurveyDetailSerializer}, tags=tag)
+    def get(self, request, survey_id: int):
+        survey = get_object_or_404(Surveys, pk=survey_id)
+        serializer = SurveyDetailSerializer(survey)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(summary="Редактирование опроса", request=SurveyUpdateSerializer,
+                   responses={200: SurveyDetailSerializer}, tags=tag)
+    def put(self, request, survey_id: int):
+        survey = get_object_or_404(Surveys, pk=survey_id)
+        if not (survey.creator == request.user or request.user.role == 'moderator'):
+            return Response({"detail": "Доступ запрещён"}, status=status.HTTP_403_FORBIDDEN)
+        serializer = SurveyUpdateSerializer(survey, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(SurveyDetailSerializer(survey).data, status=status.HTTP_200_OK)
+
+    @extend_schema(summary="Удаление опроса", responses={204: None}, tags=tag)
+    def delete(self, request, survey_id: int):
+        survey = get_object_or_404(Surveys, pk=survey_id)
+        if not (survey.creator == request.user or request.user.role == 'moderator'):
+            return Response({"detail": "Доступ запрещён"}, status=status.HTTP_403_FORBIDDEN)
+        survey.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+class SurveyArchiveView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    @extend_schema(summary="Архивация опроса", responses={200: SurveyDetailSerializer}, tags=tag)
+    def post(self, request, survey_id:int):
+        survey = get_object_or_404(Surveys, pk=survey_id)
+        if not (survey.creator == request.user or request.user.role == 'moderator'):
+            return Response({"detail": "Доступ запрещён"}, status=status.HTTP_403_FORBIDDEN)
+        survey.status = 'stopped'
+        survey.save()
+        return Response(SurveyDetailSerializer(survey).data, status=status.HTTP_200_OK)
+
+class QuestionUpdateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    @extend_schema(summary="Редактирование вопроса", request=QuestionUpdateSerializer,
+                   responses={200: QuestionSerializer}, tags=tag)
+    def put(self, request, question_id:int):
+        question = get_object_or_404(Questions, pk=question_id)
+        if not role_allowed(request.user, ['moderator', 'customer']):
+            return Response({"detail": "Доступ запрещён"}, status=status.HTTP_403_FORBIDDEN)
+        serializer = QuestionUpdateSerializer(question, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(QuestionSerializer(question).data, status=status.HTTP_200_OK)
+
+class SurveyQuestionDeleteView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+    @extend_schema(
+        summary="Удалить вопрос из опроса (по ID самого вопроса)",
+        responses={204: None},
+        tags=tag
+    )
+    def delete(self, request, question_id: int):
+        """
+        Удаляет сам вопрос и автоматически удаляет привязки SurveyQuestions.
+        Требуется, чтобы текущий пользователь был создателем опроса, которому
+        принадлежит вопрос, либо имел роль 'moderator'.
+        """
+        # Находим сам вопрос
+        question = get_object_or_404(Questions, pk=question_id)
+
+        # Проверяем, что вопрос действительно привязан к какому-то опросу
+        link = SurveyQuestions.objects.filter(question=question).select_related('survey').first()
+        if not link:
+            return Response({"detail": "Вопрос не привязан ни к одному опросу"},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Проверяем права: создатель опроса или модератор
+        if not (link.survey.creator == request.user or request.user.role == 'moderator'):
+            return Response({"detail": "Доступ запрещён"}, status=status.HTTP_403_FORBIDDEN)
+
+        # Удаляем сам вопрос (связь удалится каскадно при CASCADE)
+        question.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class QuestionCreateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
     @extend_schema(
         summary="Создать вопрос",
-        description="Добавить новый вопрос в общий пул вопросов (для customer или moderator).",
         request=QuestionSerializer,
         responses={201: inline_serializer(
             name='ИдентификаторВопроса',
             fields={'question_id': serializers.IntegerField()}
-        )},
-        tags=tag
+        )}, tags=tag
     )
     def post(self, request):
         if not role_allowed(request.user, ['customer', 'moderator']):
@@ -74,19 +144,15 @@ class QuestionCreateView(APIView):
         q = serializer.save()
         return Response({'question_id': q.question_id}, status=status.HTTP_201_CREATED)
 
-
 class SurveyQuestionLinkView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
     @extend_schema(
         summary="Привязать вопрос к опросу",
-        description="Привязка существующего вопроса к выбранному опросу (customer/moderator).",
         request=SurveyQuestionLinkSerializer,
         responses={201: inline_serializer(
             name='ИдентификаторПривязки',
             fields={'survey_question_id': serializers.IntegerField()}
-        )},
-        tags=tag
+        )}, tags=tag
     )
     def post(self, request):
         if not role_allowed(request.user, ['customer', 'moderator']):
@@ -100,35 +166,25 @@ class SurveyQuestionLinkView(APIView):
         sq = serializer.save()
         return Response({'survey_question_id': sq.survey_question_id}, status=status.HTTP_201_CREATED)
 
-
 class SurveyQuestionsListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
-    @extend_schema(
-        summary="Список вопросов опроса",
-        description="Получить список всех вопросов, привязанных к конкретному опросу.",
-        responses={200: QuestionSerializer(many=True)},
-        tags=tag
-    )
-    def get(self, request, survey_id: int):
+    @extend_schema(summary="Список вопросов опроса",
+                   responses={200: QuestionSerializer(many=True)}, tags=tag)
+    def get(self, request, survey_id:int):
         survey = get_object_or_404(Surveys, pk=survey_id)
         qlinks = SurveyQuestions.objects.filter(survey=survey).select_related('question').order_by('order')
         questions = [ql.question for ql in qlinks]
         return Response(QuestionSerializer(questions, many=True).data, status=status.HTTP_200_OK)
 
-
 class RespondentAnswerView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
     @extend_schema(
         summary="Отправить ответ",
-        description="Респондент отправляет ответ на конкретный вопрос выбранного опроса.",
         request=RespondentAnswerCreateSerializer,
         responses={201: inline_serializer(
             name='ИдентификаторОтвета',
             fields={'answer_id': serializers.IntegerField()}
-        )},
-        tags=tag
+        )}, tags=tag
     )
     def post(self, request):
         if not role_allowed(request.user, ['respondent']):
@@ -139,21 +195,16 @@ class RespondentAnswerView(APIView):
         ans = serializer.save()
         return Response({'answer_id': ans.answer_id}, status=status.HTTP_201_CREATED)
 
-
 class SurveyAnswersView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
     @extend_schema(
         summary="Все ответы на опрос",
-        description="Получить полный список ответов респондентов на выбранный опрос "
-                    "(доступно только создателю опроса или модератору).",
         responses={200: inline_serializer(
             name='ОтветыОпроса',
             fields={'answers': serializers.ListField(child=serializers.DictField())}
-        )},
-        tags=tag
+        )}, tags=tag
     )
-    def get(self, request, survey_id: int):
+    def get(self, request, survey_id:int):
         survey = get_object_or_404(Surveys, pk=survey_id)
         if not (survey.creator == request.user or request.user.role == 'moderator'):
             return Response({"detail": "Доступ запрещён"}, status=status.HTTP_403_FORBIDDEN)
@@ -172,15 +223,10 @@ class SurveyAnswersView(APIView):
             })
         return Response({'answers': out}, status=status.HTTP_200_OK)
 
-
 class SurveyToggleStatusView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
     @extend_schema(
         summary="Изменить статус опроса",
-        description="Запуск или остановка опроса: изменение поля статус на одно из "
-                    "`draft`, `active`, `stopped`, `finished`. "
-                    "Доступно только создателю опроса или модератору.",
         request=inline_serializer(
             name='НовыйСтатус',
             fields={'status': serializers.ChoiceField(
@@ -190,10 +236,9 @@ class SurveyToggleStatusView(APIView):
         responses={200: inline_serializer(
             name='СтатусОпроса',
             fields={'survey_id': serializers.IntegerField(), 'status': serializers.CharField()}
-        )},
-        tags=tag
+        )}, tags=tag
     )
-    def post(self, request, survey_id: int):
+    def post(self, request, survey_id:int):
         survey = get_object_or_404(Surveys, pk=survey_id)
         if not (survey.creator == request.user or request.user.role == 'moderator'):
             return Response({"detail": "Доступ запрещён"}, status=status.HTTP_403_FORBIDDEN)
@@ -205,17 +250,10 @@ class SurveyToggleStatusView(APIView):
         return Response({'survey_id': survey.survey_id, 'status': survey.status},
                         status=status.HTTP_200_OK)
 
-
 class AvailableSurveysView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
-    @extend_schema(
-        summary="Доступные опросы для респондента",
-        description="Список активных опросов, которые ещё не завершены и не превысили "
-                    "максимальное количество респондентов.",
-        responses={200: SurveyDetailSerializer(many=True)},
-        tags=tag
-    )
+    @extend_schema(summary="Доступные опросы для респондента",
+                   responses={200: SurveyDetailSerializer(many=True)}, tags=tag)
     def get(self, request):
         now = timezone.now()
         qs = Surveys.objects.filter(status='active').filter(

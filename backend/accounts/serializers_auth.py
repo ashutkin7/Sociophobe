@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from captcha.fields import CaptchaField
-from .models import Users   # подключаем вашу модель
+from .models import Users
 
 class UserRegistrationSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
@@ -14,13 +14,13 @@ class UserRegistrationSerializer(serializers.Serializer):
     captcha = CaptchaField()
 
     def create(self, validated_data):
-        # captcha уже провалидирована и не нужна для создания пользователя
-        validated_data.pop('captcha', None)   # ✅ безопасно
+        validated_data.pop('captcha', None)
         password = validated_data.pop('password')
         user = Users(**validated_data)
         user.set_password(password)
         user.save()
         return user
+
 
 class UserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -29,7 +29,15 @@ class UserLoginSerializer(serializers.Serializer):
 
 
 class UserChangePasswordSerializer(serializers.Serializer):
-    email = serializers.EmailField()
     old_password = serializers.CharField(write_only=True)
     new_password = serializers.CharField(write_only=True)
-    captcha = CaptchaField()
+
+
+# ➕ Для восстановления пароля
+class ForgotPasswordSerializer(serializers.Serializer):
+    email = serializers.EmailField(help_text="Email пользователя для восстановления")
+
+
+class ResetPasswordSerializer(serializers.Serializer):
+    token = serializers.CharField(help_text="Токен из письма для подтверждения")
+    new_password = serializers.CharField(write_only=True, help_text="Новый пароль")
