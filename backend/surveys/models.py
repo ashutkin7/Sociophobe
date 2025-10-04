@@ -1,5 +1,7 @@
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
+from django.core.serializers.json import DjangoJSONEncoder
 
 class Surveys(models.Model):
     STATUS_CHOICES = [
@@ -9,19 +11,24 @@ class Surveys(models.Model):
         ('finished', 'Finished'),
     ]
 
+    TYPE_CHOICES = [
+        ('simple', 'Простой'),
+        ('extended', 'Расширенный'),
+    ]
+
     survey_id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=255)
     creator = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     date_finished = models.DateTimeField(null=True, blank=True)
     max_residents = models.IntegerField(null=True, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    type_survey = models.CharField(max_length=20, choices=TYPE_CHOICES, default='simple')
 
     class Meta:
         db_table = 'surveys'
         managed = True
 
     def is_active(self):
-        from django.utils import timezone
         if self.status != 'active':
             return False
         if self.date_finished and timezone.now() > self.date_finished:
@@ -30,10 +37,21 @@ class Surveys(models.Model):
 
 
 class Questions(models.Model):
+    QUESTION_TYPES = [
+        ('text', 'Текст'),
+        ('single_choice', 'Одиночный выбор'),
+        ('multi_choice', 'Множественный выбор'),
+        ('checkbox', 'Чекбоксы'),
+        ('dropdown', 'Выпадающий список'),
+        ('likert', 'Шкала Лайкерта'),
+        ('rating', 'Рейтинг'),
+        ('date_time', 'Дата/время'),
+    ]
+
     question_id = models.AutoField(primary_key=True)
     text_question = models.TextField()
-    # optionally add question type field
-    type_question = models.CharField(max_length=50, default='text')  # 'text', 'single_choice', 'multi_choice', etc.
+    type_question = models.CharField(max_length=50, choices=QUESTION_TYPES, default='text')
+    extra_data = models.JSONField(encoder=DjangoJSONEncoder, null=True, blank=True)
 
     class Meta:
         db_table = 'questions'
@@ -63,3 +81,16 @@ class RespondentAnswers(models.Model):
         db_table = 'respondent_answers'
         managed = True
         unique_together = ('survey_question', 'respondent')
+
+
+class SurveyArchive(models.Model):
+    """
+    Архивные опросы (копия опроса + связка с пользователем).
+    """
+    archive_id = models.AutoField(primary_key=True)
+    survey = models.OneToOneField(Surveys, on_delete=models.CASCADE, related_name="archived_copy")
+    archived_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "survey_archive"
+        managed = True
