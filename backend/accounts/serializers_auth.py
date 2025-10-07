@@ -7,6 +7,7 @@ class UserRegistrationSerializer(serializers.Serializer):
     role = serializers.ChoiceField(choices=[
         ('respondent', 'Respondent'),
         ('customer', 'Customer'),
+        ('moderator', 'Moderator'),
     ])
     password = serializers.CharField(write_only=True)
     captcha_key = serializers.CharField(write_only=True)

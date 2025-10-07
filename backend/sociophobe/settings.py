@@ -122,7 +122,7 @@ CORS_ALLOW_HEADERS = [
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'Sociophobe',
+        'NAME': 'Sociophobe2',
         'USER': 'postgres',
         'PASSWORD': '1',
         'HOST': 'localhost',

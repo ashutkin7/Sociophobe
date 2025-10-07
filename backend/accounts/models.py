@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-from django.conf import settings
+
 
 class UsersManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -66,58 +66,34 @@ class Users(AbstractBaseUser, PermissionsMixin):
 
 
 class Characteristics(models.Model):
-    VALUE_TYPE_CHOICES = [
-        ('string', 'Строковое значение'),
-        ('numeric', 'Числовое значение'),
-        ('choice', 'Выбор из списка')
+    TYPE_CHOICES = [
+        ('numeric', 'Числовой'),
+        ('string', 'Строковый'),
+        ('choice', 'Выбор'),
     ]
 
     characteristic_id = models.AutoField(primary_key=True)
     name = models.CharField(max_length=255, unique=True)
-    value_type = models.CharField(
-        max_length=20,
-        choices=VALUE_TYPE_CHOICES,
-        default='string',
-        help_text="Тип значения характеристики (числовое, строковое или выбор)"
-    )
-    requirements = models.TextField(
-        null=True,
-        blank=True,
-        help_text="Текстовые требования или описание допустимых значений"
-    )
+    value_type = models.CharField(max_length=20, choices=TYPE_CHOICES)
+    requirements = models.TextField(blank=True, null=True)
 
     class Meta:
         db_table = 'characteristics'
-        verbose_name = "Характеристика"
-        verbose_name_plural = "Характеристики"
-
-    def __str__(self):
-        return f"{self.name} ({self.value_type})"
 
 
 class CharacteristicValues(models.Model):
     characteristic_value_id = models.AutoField(primary_key=True)
-    characteristic = models.ForeignKey(Characteristics, on_delete=models.CASCADE, related_name="values")
+    characteristic = models.ForeignKey(Characteristics, on_delete=models.CASCADE)
     value_text = models.CharField(max_length=255)
 
     class Meta:
         db_table = 'characteristic_values'
-        verbose_name = "Значение характеристики"
-        verbose_name_plural = "Значения характеристик"
-
-    def __str__(self):
-        return f"{self.characteristic.name}: {self.value_text}"
 
 
 class RespondentCharacteristics(models.Model):
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
+    user = models.ForeignKey(Users, on_delete=models.CASCADE)
     characteristic_value = models.ForeignKey(CharacteristicValues, on_delete=models.CASCADE)
 
     class Meta:
         db_table = 'respondent_characteristics'
         unique_together = (('user', 'characteristic_value'),)
-        verbose_name = "Характеристика респондента"
-        verbose_name_plural = "Характеристики респондентов"
-
-    def __str__(self):
-        return f"{self.user.email} — {self.characteristic_value}"

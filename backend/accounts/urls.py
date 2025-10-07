@@ -3,7 +3,12 @@ from .views_auth import (
     UserRegistration, UserLogin, UserChangePassword,
     ForgotPassword, ResetPassword, CaptchaGenerateView
 )
-from .views_profile import UserMeView, UserStatsView
+from .views_profile import (
+    UserMeView, UserStatsView,
+    AllCharacteristicsView, UserCharacteristicsView,
+    UpdateUserCharacteristicsView, CharacteristicAdminView, CharacteristicDetailView
+)
+
 
 
 urlpatterns = [
@@ -18,4 +23,12 @@ urlpatterns = [
     # Личный кабинет
     path('users/me/', UserMeView.as_view(), name='user-me'),
     path('users/me/stats/', UserStatsView.as_view(), name='user-stats'),
+
+    path('users/characteristics/all/', AllCharacteristicsView.as_view()),
+    path('users/characteristics/mine/', UserCharacteristicsView.as_view()),
+    path('users/characteristics/update/', UpdateUserCharacteristicsView.as_view()),
+
+    path('admin/characteristics/', CharacteristicAdminView.as_view(), name='characteristicadminview'),
+    path('admin/characteristics/<int:pk>/', CharacteristicDetailView.as_view()),
+
 ]
