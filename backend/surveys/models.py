@@ -94,3 +94,23 @@ class SurveyArchive(models.Model):
     class Meta:
         db_table = "survey_archive"
         managed = True
+
+class RespondentSurveyStatus(models.Model):
+    STATUS_CHOICES = [
+        ('in_progress', 'В процессе'),
+        ('completed', 'Пройден'),
+    ]
+
+    id = models.AutoField(primary_key=True)
+    respondent = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='survey_statuses')
+    survey = models.ForeignKey(Surveys, on_delete=models.CASCADE, related_name='respondent_statuses')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'respondent_survey_status'
+        managed = True
+        unique_together = ('respondent', 'survey')
+
+    def __str__(self):
+        return f"{self.respondent} — {self.survey.name}: {self.status}"

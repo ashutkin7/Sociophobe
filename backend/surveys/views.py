@@ -11,14 +11,16 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.db import models
 import json
+from .permissions import IsSurveyParticipantOrAdmin
 
 from .serializers import (
     SurveyCreateSerializer, SurveyDetailSerializer, SurveyUpdateSerializer,
     QuestionSerializer, QuestionUpdateSerializer,
     SurveyQuestionLinkSerializer, RespondentAnswerCreateSerializer,
-    SurveyArchiveSerializer
+    SurveyArchiveSerializer, RespondentSurveyStatusSerializer,
+    RespondentAnswerDetailSerializer
 )
-from .models import Surveys, Questions, SurveyQuestions, RespondentAnswers, SurveyArchive
+from .models import Surveys, Questions, SurveyQuestions, RespondentAnswers, SurveyArchive, RespondentSurveyStatus
 
 tag = ['Опросы']
 
@@ -416,3 +418,164 @@ class ImportSurveyQuestionsView(APIView):
             return Response({"detail": "Неподдерживаемый формат"}, status=status.HTTP_400_BAD_REQUEST)
 
         return Response({"created_questions": created}, status=status.HTTP_201_CREATED)
+
+
+class MySurveyProgressView(APIView):
+    """
+    Получение всех опросов, в которых участвовал респондент, со статусами.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Мои пройденные/активные опросы",
+        responses={200: RespondentSurveyStatusSerializer(many=True)},
+        tags=['Опросы']
+    )
+    def get(self, request):
+        user = request.user
+        statuses = RespondentSurveyStatus.objects.filter(respondent=user).select_related('survey')
+        serializer = RespondentSurveyStatusSerializer(statuses, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+class SurveyProgressUpdateView(APIView):
+    """
+    Обновить или создать статус опроса для респондента.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Изменить/создать статус опроса (пройден/в процессе)",
+        request=inline_serializer(
+            name="SurveyProgressUpdateRequest",
+            fields={
+                'status': serializers.ChoiceField(choices=['in_progress', 'completed'])
+            }
+        ),
+        responses={200: RespondentSurveyStatusSerializer},
+        tags=['Опросы']
+    )
+    def post(self, request, survey_id: int):
+        user = request.user
+        survey = get_object_or_404(Surveys, pk=survey_id)
+
+        status_value = request.data.get('status')
+        if status_value not in dict(RespondentSurveyStatus.STATUS_CHOICES):
+            return Response({"detail": "Недопустимый статус"}, status=status.HTTP_400_BAD_REQUEST)
+
+        record, created = RespondentSurveyStatus.objects.update_or_create(
+            respondent=user,
+            survey=survey,
+            defaults={'status': status_value}
+        )
+
+        print(f"🔄 [{user}] {'Создан' if created else 'Обновлён'} статус: {survey.name} → {status_value}")
+
+        serializer = RespondentSurveyStatusSerializer(record)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class RespondentSurveyAnswersView(APIView):
+    permission_classes = [IsSurveyParticipantOrAdmin]
+
+    @extend_schema(
+        summary="Получить все ответы респондента по конкретному опросу",
+        description="Респондент получает только свои ответы, админ и модератор — все.",
+        responses={200: inline_serializer(
+            name='ОтветыРеспондентаПоОпросу',
+            fields={
+                'survey_id': serializers.IntegerField(),
+                'respondent_id': serializers.IntegerField(),
+                'answers': serializers.ListField(child=serializers.DictField())
+            }
+        )},
+        tags=['Опросы']
+    )
+    def get(self, request, survey_id: int):
+        user = request.user
+        print(f"[DEBUG] 🔍 Запрос GET /api/surveys/{survey_id}/answers/ от {user} (роль={getattr(user, 'role', None)})")
+
+        survey = get_object_or_404(Surveys, pk=survey_id)
+
+        # Проверяем разрешения на уровне объекта
+        self.check_object_permissions(request, survey)
+
+        role = getattr(user, 'role', None)
+        if role in ["moderator", "customer"] and survey.creator == user:
+            answers = RespondentAnswers.objects.filter(
+                survey_question__survey=survey
+            ).select_related("respondent", "survey_question__question")
+            print(f"[DEBUG] ✅ Администратор/модератор видит {answers.count()} ответов.")
+        else:
+            answers = RespondentAnswers.objects.filter(
+                respondent=user,
+                survey_question__survey=survey
+            ).select_related("survey_question__question")
+            print(f"[DEBUG] ✅ Респондент видит {answers.count()} своих ответов.")
+
+        answers_list = [
+            {
+                "answer_id": ans.answer_id,
+                "question_id": ans.survey_question.question.question_id,
+                "question_text": ans.survey_question.question.text_question,
+                "type_question": ans.survey_question.question.type_question,
+                "text_answer": ans.text_answer,
+                "created_at": ans.created_at,
+            }
+            for ans in answers
+        ]
+
+        print(f"[DEBUG] 🧩 Отправляется {len(answers_list)} ответов клиенту.")
+        return Response({
+            "survey_id": survey.survey_id,
+            "respondent_id": user.id,
+            "answers": answers_list
+        }, status=status.HTTP_200_OK)
+
+class RespondentAnswerDetailView(APIView):
+    """
+    Получение ответа текущего респондента на конкретный вопрос по его ID.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Получить ответ респондента на конкретный вопрос",
+        description="Доступно только пользователю с ролью respondent, возвращает один ответ (если есть).",
+        responses={200: RespondentAnswerDetailSerializer},
+        tags=['Ответы респондентов']
+    )
+    def get(self, request, question_id: int):
+        user = request.user
+        role = getattr(user, 'role', None)
+
+        print(f"[DEBUG] 🔍 GET /api/questions/{question_id}/my-answer/ от {user} (роль={role})")
+
+        # Проверка авторизации
+        if not user.is_authenticated:
+            print("[ERROR] ❌ Пользователь не аутентифицирован.")
+            return Response({"detail": "Требуется авторизация."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # Только респонденты имеют доступ
+        if role != "respondent":
+            print(f"[DENY] 🚫 Доступ запрещён — роль {role} не является респондентом.")
+            return Response({"detail": "Только респонденты могут просматривать свои ответы."},
+                            status=status.HTTP_403_FORBIDDEN)
+
+        # Проверяем существование вопроса
+        question = get_object_or_404(SurveyQuestions, pk=question_id)
+        print(f"[DEBUG] ✅ Найден вопрос ID={question_id}: {question.text_question}")
+
+        # Ищем ответ респондента
+        answer = RespondentAnswers.objects.filter(
+            respondent=user,
+            survey_question__question=question
+        ).select_related("survey_question__question").first()
+
+        if not answer:
+            print(f"[WARN] ⚠️ У пользователя {user} нет ответа на вопрос ID={question_id}")
+            return Response({"detail": "Вы не отвечали на этот вопрос."},
+                            status=status.HTTP_404_NOT_FOUND)
+
+        print(f"[DEBUG] ✅ Найден ответ ID={answer.answer_id}, текст={answer.text_answer!r}")
+
+        serializer = RespondentAnswerDetailSerializer(answer)
+        return Response(serializer.data, status=status.HTTP_200_OK)

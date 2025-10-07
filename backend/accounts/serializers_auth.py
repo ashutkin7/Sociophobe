@@ -1,31 +1,53 @@
 from rest_framework import serializers
-from captcha.fields import CaptchaField
 from .models import Users
+from captcha.models import CaptchaStore
 
 class UserRegistrationSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=255)
     email = serializers.EmailField()
     role = serializers.ChoiceField(choices=[
         ('respondent', 'Respondent'),
         ('customer', 'Customer'),
-        ('moderator', 'Moderator')
     ])
     password = serializers.CharField(write_only=True)
-    captcha = CaptchaField()
+    captcha_key = serializers.CharField(write_only=True)
+    captcha_value = serializers.CharField(write_only=True)
+
+    def validate(self, data):
+        key = data.get('captcha_key')
+        value = data.get('captcha_value')
+
+        # Проверка наличия капчи
+        if not key or not value:
+            raise serializers.ValidationError("Требуется ввести капчу.")
+
+        # Проверка существования ключа
+        try:
+            captcha = CaptchaStore.objects.get(hashkey=key)
+        except CaptchaStore.DoesNotExist:
+            raise serializers.ValidationError("Ключ капчи не найден или устарел. Обновите капчу.")
+
+        # Проверка совпадения
+        if captcha.response != value.strip().lower():
+            raise serializers.ValidationError("Неверно введена капча. Попробуйте снова.")
+
+        # Капча проверена успешно — удаляем её
+        captcha.delete()
+        return data
 
     def create(self, validated_data):
-        validated_data.pop('captcha', None)
         password = validated_data.pop('password')
+        validated_data.pop('captcha_key', None)
+        validated_data.pop('captcha_value', None)
+
         user = Users(**validated_data)
         user.set_password(password)
         user.save()
         return user
 
-
 class UserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True)
-    captcha = CaptchaField()
+
 
 
 class UserChangePasswordSerializer(serializers.Serializer):

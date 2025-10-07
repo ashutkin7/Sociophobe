@@ -10,6 +10,8 @@ from django.conf import settings
 from drf_spectacular.utils import extend_schema, OpenApiResponse, inline_serializer
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
+from captcha.models import CaptchaStore
+from captcha.helpers import captcha_image_url
 
 from .models import Users
 from .serializers_auth import (
@@ -27,8 +29,8 @@ class UserRegistration(APIView):
     permission_classes = [AllowAny]
 
     @extend_schema(
-        summary="Регистрация пользователя",
-        description="Создание нового пользователя с ролью respondent/customer/moderator. Проверка simple-captcha.",
+        summary="Регистрация пользователя с капчей",
+        description="Создание нового пользователя. Требуется корректное прохождение simple-captcha.",
         request=UserRegistrationSerializer,
         responses={
             201: OpenApiResponse(
@@ -43,10 +45,13 @@ class UserRegistration(APIView):
     )
     def post(self, request):
         serializer = UserRegistrationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        user = serializer.save()
-        return Response({"user_id": user.user_id}, status=status.HTTP_201_CREATED)
+        if not serializer.is_valid():
+            print("[DEBUG ❌] Ошибка сериализатора:", serializer.errors)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        user = serializer.save()
+        print(f"[DEBUG ✅] Пользователь {user.email} ({user.role}) успешно зарегистрирован.")
+        return Response({"user_id": user.user_id}, status=status.HTTP_201_CREATED)
 
 class UserLogin(APIView):
     permission_classes = [AllowAny]
@@ -200,3 +205,42 @@ class ResetPassword(APIView):
         user.save()
         return Response({"message": "Пароль успешно изменен"},
                         status=status.HTTP_200_OK)
+
+class CaptchaGenerateView(APIView):
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="Генерация новой капчи",
+        description=(
+            "Возвращает уникальный ключ и ссылку на изображение капчи. "
+            "Используйте `captcha_key` и `captcha_image_url` для отображения изображения "
+            "на фронтенде. Ввод пользователя потом передаётся в `captcha_value` при регистрации или входе."
+        ),
+        responses={
+            200: OpenApiResponse(
+                response=inline_serializer(
+                    name='CaptchaGenerateResponse',
+                    fields={
+                        'captcha_key': serializers.CharField(
+                            help_text="Уникальный ключ для проверки капчи"
+                        ),
+                        'captcha_image_url': serializers.CharField(
+                            help_text="Ссылка на изображение капчи, отображаемое пользователю"
+                        )
+                    }
+                ),
+                description="Капча успешно создана"
+            )
+        },
+        tags=tag_auth
+    )
+    def get(self, request):
+        new_captcha = CaptchaStore.generate_key()
+        image_url = captcha_image_url(new_captcha)
+
+        print(f"[DEBUG ✅] Сгенерирована капча: key={new_captcha}, url={image_url}")
+
+        return Response({
+            "captcha_key": new_captcha,
+            "captcha_image_url": image_url
+        }, status=status.HTTP_200_OK)

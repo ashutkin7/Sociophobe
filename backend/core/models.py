@@ -1,39 +1,6 @@
 from django.db import models
-from django.contrib.auth.hashers import make_password, check_password
 
-from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-
-from accounts.models import Users
-from surveys.models import Surveys, Questions, SurveyQuestions, RespondentAnswers
-
-class Characteristics(models.Model):
-    characteristic_id = models.AutoField(primary_key=True)
-    name = models.CharField(max_length=255)
-
-    class Meta:
-        
-        db_table = 'characteristics'
-
-
-class CharacteristicValues(models.Model):
-    characteristic_value_id = models.AutoField(primary_key=True)
-    characteristic = models.ForeignKey(Characteristics, on_delete=models.CASCADE)
-    value_text = models.CharField(max_length=255)
-
-    class Meta:
-        
-        db_table = 'characteristic_values'
-
-
-class RespondentCharacteristics(models.Model):
-    user = models.ForeignKey(Users, on_delete=models.CASCADE)
-    characteristic_value = models.ForeignKey(CharacteristicValues, on_delete=models.CASCADE)
-
-    class Meta:
-        
-        db_table = 'respondent_characteristics'
-        unique_together = (('user', 'characteristic_value'),)
-
+from surveys.models import Surveys, Questions
 
 
 class Dashboards(models.Model):
