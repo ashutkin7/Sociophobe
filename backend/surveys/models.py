@@ -24,6 +24,15 @@ class Surveys(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
     type_survey = models.CharField(max_length=20, choices=TYPE_CHOICES, default='simple')
 
+    # ✅ Новое поле
+    cost = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        help_text="Стоимость (или вознаграждение) за прохождение опроса"
+    )
+
     class Meta:
         db_table = 'surveys'
         managed = True
@@ -57,7 +66,6 @@ class Questions(models.Model):
         db_table = 'questions'
         managed = True
 
-
 class SurveyQuestions(models.Model):
     survey_question_id = models.AutoField(primary_key=True)
     survey = models.ForeignKey(Surveys, on_delete=models.CASCADE, related_name='survey_questions')
@@ -68,7 +76,6 @@ class SurveyQuestions(models.Model):
         db_table = 'survey_questions'
         managed = True
         unique_together = ('survey', 'question')
-
 
 class RespondentAnswers(models.Model):
     answer_id = models.AutoField(primary_key=True)
@@ -81,7 +88,6 @@ class RespondentAnswers(models.Model):
         db_table = 'respondent_answers'
         managed = True
         unique_together = ('survey_question', 'respondent')
-
 
 class SurveyArchive(models.Model):
     """
@@ -102,9 +108,22 @@ class RespondentSurveyStatus(models.Model):
     ]
 
     id = models.AutoField(primary_key=True)
-    respondent = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='survey_statuses')
-    survey = models.ForeignKey(Surveys, on_delete=models.CASCADE, related_name='respondent_statuses')
+    respondent = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='survey_statuses'
+    )
+    survey = models.ForeignKey(
+        Surveys,
+        on_delete=models.CASCADE,
+        related_name='respondent_statuses'
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')
+    score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Оценка качества прохождения опроса (0.0–1.0)"
+    )
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -113,4 +132,4 @@ class RespondentSurveyStatus(models.Model):
         unique_together = ('respondent', 'survey')
 
     def __str__(self):
-        return f"{self.respondent} — {self.survey.name}: {self.status}"
+        return f"{self.respondent} — {self.survey.name}: {self.status} ({self.score if self.score is not None else 'нет оценки'})"

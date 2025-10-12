@@ -71,10 +71,16 @@ class UpdateUserCharacteristicsView(APIView):
     def post(self, request):
         serializer = RespondentCharacteristicSerializer(data=request.data, many=True)
         serializer.is_valid(raise_exception=True)
-        serializer.create_or_update(request.user, serializer.validated_data)
-        updated = RespondentCharacteristics.objects.filter(user=request.user)
-        return Response(RespondentCharacteristicSerializer(updated, many=True).data)
 
+        # ✅ Обновляем/добавляем характеристики
+        RespondentCharacteristicSerializer.create_or_update(request.user, serializer.validated_data)
+
+        updated = RespondentCharacteristics.objects.filter(user=request.user).select_related(
+            'characteristic_value__characteristic'
+        )
+
+        print(f"✅ У пользователя ID={request.user.id} теперь {updated.count()} характеристик.")
+        return Response(RespondentCharacteristicSerializer(updated, many=True).data, status=200)
 
 # ============ CRUD для Characteristics (админ) ============
 

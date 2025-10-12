@@ -8,18 +8,22 @@ from .AI_generate import (
     check_question_bias,
     evaluate_reliability,
     detect_anomalies,
-    summarize_text
+    summarize_text,
+    generate_questions_repeat,
+    evaluate_answer_quality,
 )
 from .serializers import (
     GenerateQuestionsSerializer,
     CheckBiasSerializer,
     EvaluateReliabilitySerializer,
     DetectAnomaliesSerializer,
-    SummarizeTextSerializer
+    SummarizeTextSerializer,
+    EvaluateAnswerQualitySerializer,
 )
 
 # Отдельная папка (tag) в Swagger
 tag = ['Искусственный интеллект']
+
 
 
 class GenerateQuestions(APIView):
@@ -27,7 +31,7 @@ class GenerateQuestions(APIView):
         summary="Генерация вопросов",
         description=(
             "Генерирует список открытых вопросов по заданной теме. "
-            "Используется LLM, возвращает JSON со списком строк."
+            "Если `double_questions=True`, создаются пары вопросов с одинаковым смыслом."
         ),
         request=GenerateQuestionsSerializer,
         responses={
@@ -49,7 +53,17 @@ class GenerateQuestions(APIView):
         if serializer.is_valid():
             topic = serializer.validated_data['topic']
             num = serializer.validated_data['num_questions']
-            result = generate_questions(topic, num)
+            double = serializer.validated_data.get('double_questions', False)
+
+            # ✅ Выбор функции генерации
+            if double:
+                result = generate_questions_repeat(topic, num)
+            else:
+                result = generate_questions(topic, num)
+
+            # Лог для отладки
+            print(f"[AI] Generated ({'double' if double else 'single'}) questions for topic '{topic}': {result}")
+
             return Response({"questions": result}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
@@ -173,3 +187,58 @@ class SummarizeText(APIView):
             result = summarize_text(serializer.validated_data['answers'])
             return Response({"summary": result}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class EvaluateAnswerQuality(APIView):
+    @extend_schema(
+        summary="Оценка качества ответов",
+        description=(
+            "Проверяет логичность, связность и осмысленность ответов "
+            "по каждому вопросу. Возвращает оценки по каждому пункту "
+            "и общий показатель `overall_score`."
+        ),
+        request=EvaluateAnswerQualitySerializer,
+        responses={
+            200: OpenApiResponse(
+                response=inline_serializer(
+                    name='EvaluateAnswerQualityResponse',
+                    fields={
+                        "evaluations": serializers.ListField(
+                            child=inline_serializer(
+                                name='AnswerEvaluation',
+                                fields={
+                                    "question": serializers.CharField(help_text="Текст вопроса"),
+                                    "answer": serializers.CharField(help_text="Ответ респондента"),
+                                    "score": serializers.FloatField(help_text="Оценка качества (0–1)"),
+                                    "issues": serializers.ListField(
+                                        child=serializers.CharField(),
+                                        help_text="Список выявленных проблем (если есть)"
+                                    ),
+                                }
+                            ),
+                            help_text="Оценка каждого ответа"
+                        ),
+                        "overall_score": serializers.FloatField(help_text="Средняя оценка по всем ответам (0–1)")
+                    }
+                ),
+                description="Качество ответов успешно оценено"
+            ),
+            400: OpenApiResponse(description="Ошибки валидации входных данных"),
+        },
+        tags=tag,
+    )
+    def post(self, request):
+        serializer = EvaluateAnswerQualitySerializer(data=request.data)
+        if serializer.is_valid():
+            questions = serializer.validated_data["questions"]
+            answers = serializer.validated_data["answers"]
+
+            result = evaluate_answer_quality(questions, answers)
+
+            # 🔍 Для отладки в консоли
+            print(f"[AI] EvaluateAnswerQuality — questions={len(questions)}, answers={len(answers)}")
+            print(f"📊 Result: overall={result.get('overall_score')}, "
+                  f"evaluations_count={len(result.get('evaluations', []))}")
+
+            return Response(result, status=status.HTTP_200_OK)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+

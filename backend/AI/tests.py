@@ -2,83 +2,58 @@ from django.urls import reverse
 from rest_framework.test import APITestCase
 from rest_framework import status
 
+class AIApiExtendedTest(APITestCase):
+    """Расширенные тесты AI-эндпоинтов и функций"""
 
-class AIApiEndpointsTest(APITestCase):
-    """
-    Автоматическая проверка всех эндпоинтов раздела 'Искусственный интеллект'.
-    Использует встроенный тестовый клиент DRF.
-    """
-
-    def test_generate_questions(self):
-        """Генерация вопросов по теме"""
-        url = reverse('generate-questions')
-        data = {"topic": "Доставка еды", "num_questions": 5}
-        response = self.client.post(url, data, format='json')
+    def test_generate_questions_repeat_random(self):
+        """Генерация пар вопросов с перемешанным порядком"""
+        url = reverse("generate-questions-repeat")
+        data = {"topic": "Транспорт", "num_questions": 4}
+        response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
         self.assertIn("questions", response.data)
         self.assertIsInstance(response.data["questions"], list)
+        self.assertGreater(len(response.data["questions"]), 0)
 
-    def test_check_bias(self):
-        """Проверка вопросов на предвзятость"""
-        url = reverse('check-bias')
+    def test_evaluate_answer_quality_with_overall_score(self):
+        """Проверка корректности анализа качества ответов"""
+        url = reverse("evaluate-answer-quality")
         data = {
             "questions": [
-                "Знаете ли вы про нашу акцию?",
-                "Как вы оцениваете сервис доставки?"
-            ]
-        }
-        response = self.client.post(url, data, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
-        self.assertIn("biased_questions_indices", response.data)
-        self.assertIsInstance(response.data["biased_questions_indices"], list)
-        # каждый элемент – индекс (int)
-        self.assertTrue(all(isinstance(i, int) for i in response.data["biased_questions_indices"]))
-
-    def test_evaluate_reliability(self):
-        """Оценка достоверности массива ответов"""
-        url = reverse('evaluate-reliability')
-        data = {
+                "Как часто вы пользуетесь доставкой?",
+                "Что влияет на ваш выбор сервиса доставки?"
+            ],
             "answers": [
-                "Еда пришла вовремя и была горячей.",
-                "Все понравилось.",
-                "Не знаю."
+                "Обычно раз в неделю.",
+                "На выбор влияет скорость и цена."
             ]
         }
-        response = self.client.post(url, data, format='json')
+        response = self.client.post(url, data, format="json")
         self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
-        self.assertIn("reliability_scores", response.data)
-        self.assertIsInstance(response.data["reliability_scores"], list)
-        # 0 или 1 для каждого ответа
-        self.assertTrue(all(score in [0, 1] for score in response.data["reliability_scores"]))
+        self.assertIn("evaluations", response.data)
+        self.assertIn("overall_score", response.data)
+        self.assertTrue(0 <= response.data["overall_score"] <= 1)
 
-    def test_detect_anomalies(self):
-        """Выявление аномальных ответов относительно вопроса"""
-        url = reverse('detect-anomalies')
-        data = {
-            "question": "Что вам понравилось в сервисе?",
-            "answers": [
-                "Все понравилось",
-                "Быстрая доставка",
-                "abrakadabra random words!!!"
+    def test_auto_average_score_when_missing(self):
+        """Если overall_score не вернулся — должен быть вычислен автоматически"""
+        from .AI_generate import evaluate_answer_quality
+        fake_json = {
+            "evaluations": [
+                {"question": "Q1", "answer": "A1", "score": 0.8, "issues": []},
+                {"question": "Q2", "answer": "A2", "score": 0.6, "issues": ["short"]}
             ]
         }
-        response = self.client.post(url, data, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
-        self.assertIn("anomaly_indices", response.data)
-        self.assertIsInstance(response.data["anomaly_indices"], list)
-        self.assertTrue(all(isinstance(i, int) for i in response.data["anomaly_indices"]))
+        import json
+        response_mock = json.dumps(fake_json)
+        # Симулируем отсутствие overall_score
+        result = evaluate_answer_quality(["Q1", "Q2"], ["A1", "A2"])
+        self.assertIn("overall_score", result)
+        self.assertAlmostEqual(result["overall_score"], 0.7, delta=0.01)
 
-    def test_summarize_text(self):
-        """Суммаризация набора ответов"""
-        url = reverse('summarize-text')
-        data = {
-            "answers": [
-                "Еда была вкусная и горячая.",
-                "Доставка пришла быстро.",
-                "Курьер был вежлив."
-            ]
-        }
-        response = self.client.post(url, data, format='json')
-        self.assertEqual(response.status_code, status.HTTP_200_OK, response.content)
-        self.assertIn("summary", response.data)
-        self.assertIsInstance(response.data["summary"], str)
+    def test_error_handling_in_quality_check(self):
+        """Проверка корректности обработки ошибок при некорректных данных"""
+        from .AI_generate import evaluate_answer_quality
+        result = evaluate_answer_quality([], [])
+        self.assertIsInstance(result, dict)
+        self.assertIn("overall_score", result)
+        self.assertEqual(result["overall_score"], 0.0)

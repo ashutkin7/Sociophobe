@@ -4,7 +4,8 @@ from .views import (
     CheckBias,
     EvaluateReliability,
     DetectAnomalies,
-    SummarizeText
+    SummarizeText,
+    EvaluateAnswerQuality
 )
 
 urlpatterns = [
@@ -13,4 +14,5 @@ urlpatterns = [
     path('evaluate-reliability/', EvaluateReliability.as_view(), name='evaluate-reliability'),
     path('detect-anomalies/', DetectAnomalies.as_view(), name='detect-anomalies'),
     path('summarize-text/', SummarizeText.as_view(), name='summarize-text'),
+    path('evaluate-answer-quality/', EvaluateAnswerQuality.as_view(), name='evaluate-answer-quality'),
 ]

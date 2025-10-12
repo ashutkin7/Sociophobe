@@ -94,6 +94,23 @@ class RespondentCharacteristics(models.Model):
     user = models.ForeignKey(Users, on_delete=models.CASCADE)
     characteristic_value = models.ForeignKey(CharacteristicValues, on_delete=models.CASCADE)
 
+    # ✅ Новое поле (оценка качества соответствия)
+    score = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Оценка соответствия характеристике (от 0 до 1)"
+    )
+
     class Meta:
         db_table = 'respondent_characteristics'
         unique_together = (('user', 'characteristic_value'),)
+
+    def clean(self):
+        # Автоматическая валидация диапазона 0–1
+        if self.score is not None and not (0.0 <= self.score <= 1.0):
+            from django.core.exceptions import ValidationError
+            raise ValidationError("Поле 'score' должно быть в диапазоне от 0 до 1")
+
+    def __str__(self):
+        return f"{self.user.email} → {self.characteristic_value} ({self.score})"
+

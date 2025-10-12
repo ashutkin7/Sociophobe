@@ -1,39 +1,54 @@
+from openai import OpenAI
 import google.generativeai as oldgenai
 from .genai_api import api_key as genai_api_key
 import json
+import random
+
+PROXY_URL = "https://gemini-proxy.ashutkin.workers.dev/v1"
+API_KEY = genai_api_key
 
 # ===============================
-# Базовая конфигурация LLM
+# КЛИЕНТ
 # ===============================
-oldgenai.configure(api_key=genai_api_key)
+client = OpenAI(
+    api_key=API_KEY,  # Передаем ключ здесь
+    base_url=PROXY_URL
+)
 
-def get_genai_modals():
-    """Выводит список всех доступных моделей"""
-    models = oldgenai.list_models()
-    print("Доступные модели:")
-    for model in models:
-        print(f"- Имя: {model.name}")
-        print(f"  Описание: {model.description}")
-        print(f"  Поддерживаемые возможности: {model.supported_generation_methods}")
-        print("-" * 20)
+# ===============================
+# ФУНКЦИИ
+# ===============================
 
+def get_available_models():
+    """Получает список доступных моделей через прокси"""
+    try:
+        models = client.models.list()
+        print("Доступные модели:")
+        for model in models.data:
+            print(f"- {model.id}")
+        return models.data
+    except Exception as e:
+        print(f"Ошибка при получении моделей: {e}")
+        return []
 
-def generate_response(model_names: list, prompt: str) -> str:
+def generate_response(model_name: str, prompt: str) -> str:
     """
-    Запрашивает модели из списка последовательно и возвращает ответ от первой успешно сработавшей модели.
-    :param model_names: Список названий моделей (например, ['gemini-2.5-flash'])
-    :param prompt: Текст запроса.
-    :return: Строка ответа LLM в текстовом виде.
+    Отправляет запрос к Gemini через прокси
+    :param model_name: Имя модели (например 'gemini-pro')
+    :param prompt: Текст запроса
+    :return: Ответ модели
     """
-    for model_name in model_names:
-        try:
-            model = oldgenai.GenerativeModel(model_name)
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            print(f"Ошибка при запросе к модели {model_name}: {e}")
-    print("Не удалось получить ответ ни от одной из указанных моделей.")
-    return ''
+    try:
+        response = client.chat.completions.create(
+            model=model_name,
+            messages=[
+                {"role": "user", "content": prompt}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"Ошибка при запросе: {e}")
+        return ""
 
 
 def _process_json_response(json_string: str, key: str):
@@ -86,6 +101,91 @@ def generate_questions(topic: str, n: int = 10) -> list:
     return _process_json_response(response, "questions")
 
 
+def generate_questions_repeat(topic: str, n: int = 10) -> list:
+    """
+    Генерация пар вопросов по теме (разные формулировки, один смысл).
+    Возвращает случайно перемешанный список вопросов.
+    """
+    prompt = (
+        f"Ты — эксперт по проведению социологических опросов.\n"
+        f"Сгенерируй {n} пар ОТКРЫТЫХ вопросов по теме: «{topic}».\n"
+        f"Каждая пара должна содержать два вопроса с ОДИНАКОВЫМ смыслом, "
+        f"но с разной формулировкой.\n"
+        f"Избегай наводящих и неестественных фраз.\n"
+        f"Верни результат в ЧИСТОМ JSON:\n"
+        f'{{"questions": [{{"pair": ["вопрос_1", "вопрос_2"]}}, ...]}}'
+    )
+
+    response = generate_response(MODEL_NAMES, prompt)
+    pairs = _process_json_response(response, "questions")
+
+    if not pairs:
+        return []
+
+    # ✅ Перемешиваем все вопросы
+    all_questions = [q for pair in pairs for q in pair.get("pair", [])]
+    random.shuffle(all_questions)
+    return all_questions
+
+def evaluate_answer_quality(questions: list, answers: list) -> dict:
+    """
+    Проверяет качество ответов.
+    Возвращает JSON:
+    {
+        "evaluations": [{"question": str, "answer": str, "score": float, "issues": [str]}],
+        "overall_score": float
+    }
+    """
+    questions_text = json.dumps(questions, ensure_ascii=False)
+    answers_text = json.dumps(answers, ensure_ascii=False)
+
+    prompt = (
+        "Ты — эксперт по когнитивному анализу ответов респондентов.\n"
+        "Проанализируй соответствие ответов вопросам, их логическую связность и внутренние противоречия.\n"
+        "Для каждого вопроса оцени:\n"
+        "- точность и осмысленность (0–1),\n"
+        "- укажи кратко, какие проблемы (если есть).\n"
+        "Также вычисли общую оценку качества (overall_score) — среднее по всем ответам.\n"
+        "Верни в ЧИСТОМ JSON виде:\n"
+        "{\n"
+        '  "evaluations": [\n'
+        '    {"question": "<текст>", "answer": "<текст>", "score": 0.0–1.0, "issues": ["строка1", "строка2"]}, ...\n'
+        '  ],\n'
+        '  "overall_score": 0.0–1.0\n'
+        "}"
+        f"\n\nВопросы: {questions_text}\nОтветы: {answers_text}"
+    )
+
+    try:
+        response = client.chat.completions.create(
+            model=random.choice(MODEL_NAMES),
+            messages=[{"role": "user", "content": prompt}]
+        )
+        raw = response.choices[0].message.content.strip()
+        raw = raw.replace("```json", "").replace("```", "").strip()
+        data = json.loads(raw)
+
+        # ✅ Автоматический перерасчёт average_score, если нет overall_score
+        scores = [e.get("score", 0) for e in data.get("evaluations", [])]
+        if not scores:
+            print("⚠️ Нет индивидуальных оценок, устанавливается 0.0")
+            avg = 0.0
+        else:
+            avg = round(sum(scores) / len(scores), 3)
+
+        if "overall_score" not in data or data.get("overall_score") is None:
+            print(f"ℹ️ overall_score не найден — пересчитан вручную: {avg}")
+            data["overall_score"] = avg
+        else:
+            print(f"✅ overall_score из LLM: {data['overall_score']}")
+
+        print(f"🧾 Средний расчёт (average_score): {avg}")
+        return data
+
+    except Exception as e:
+        print(f"Ошибка анализа качества: {e}")
+        return {"evaluations": [], "overall_score": 0.0}
+
 def summarize_text(answers: list) -> str:
     """
     Суммаризация множества ответов.
@@ -130,7 +230,7 @@ def detect_anomalies(question: str, answers: list) -> list:
     prompt = (
         "Ты — аналитик аномалий в социологических исследованиях.\n"
         "Дан вопрос и список ответов.\n"
-        "Найди ответы, которые явно не соответствуют вопросу или выглядят аномальными.\n"
+        "Найди ответы, которые явно не соответствуют вопросу или точно аномальные.\n"
         "Верни индексы этих ответов в ЧИСТОМ JSON:\n"
         '{"anomalies": [список индексов]}\n'
         f"Вопрос: {question}\n"

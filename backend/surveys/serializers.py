@@ -6,6 +6,7 @@ from .models import Surveys, Questions, SurveyQuestions, RespondentAnswers, Surv
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from .models import RespondentAnswers
+from core.models import SurveyRequiredCharacteristics
 
 
 def log_validation_error(serializer_name: str, field_name: str, data, error):
@@ -24,21 +25,20 @@ def log_validation_error(serializer_name: str, field_name: str, data, error):
 class SurveyCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Surveys
-        fields = ['survey_id', 'name', 'date_finished', 'max_residents', 'status', 'type_survey']
+        fields = ['survey_id', 'name', 'date_finished', 'max_residents', 'status', 'type_survey', 'cost']
         read_only_fields = ['survey_id', 'status']
 
 
 class SurveyDetailSerializer(serializers.ModelSerializer):
     class Meta:
         model = Surveys
-        fields = ['survey_id', 'name', 'creator', 'date_finished', 'max_residents', 'status', 'type_survey']
+        fields = ['survey_id', 'name', 'creator', 'date_finished', 'max_residents', 'status', 'type_survey', 'cost']
 
 
 class SurveyUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Surveys
-        fields = ['name', 'date_finished', 'max_residents', 'type_survey']
-
+        fields = ['name', 'date_finished', 'max_residents', 'type_survey', 'cost']
 
 # === QUESTIONS ===
 class QuestionSerializer(serializers.ModelSerializer):
@@ -231,7 +231,7 @@ class RespondentSurveyStatusSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = RespondentSurveyStatus
-        fields = ['id', 'survey', 'survey_name', 'status', 'updated_at']
+        fields = ['id', 'survey', 'survey_name', 'status', 'score', 'updated_at']
         read_only_fields = ['id', 'updated_at']
 
 class RespondentAnswerDetailSerializer(serializers.ModelSerializer):
@@ -249,3 +249,12 @@ class RespondentAnswerDetailSerializer(serializers.ModelSerializer):
             'text_answer',
             'created_at',
         ]
+
+# --- ХАРАКТЕРИСТИКИ ДЛЯ ОПРОСА ---
+
+class SurveyRequiredCharacteristicSerializer(serializers.ModelSerializer):
+    characteristic_name = serializers.CharField(source='characteristic.name', read_only=True)
+
+    class Meta:
+        model = SurveyRequiredCharacteristics
+        fields = ['id', 'survey', 'characteristic', 'characteristic_name', 'requirements']

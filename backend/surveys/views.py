@@ -18,9 +18,10 @@ from .serializers import (
     QuestionSerializer, QuestionUpdateSerializer,
     SurveyQuestionLinkSerializer, RespondentAnswerCreateSerializer,
     SurveyArchiveSerializer, RespondentSurveyStatusSerializer,
-    RespondentAnswerDetailSerializer
+    RespondentAnswerDetailSerializer, SurveyRequiredCharacteristicSerializer
 )
 from .models import Surveys, Questions, SurveyQuestions, RespondentAnswers, SurveyArchive, RespondentSurveyStatus
+from core.models import SurveyRequiredCharacteristics
 
 tag = ['Опросы']
 
@@ -61,11 +62,6 @@ class MySurveysView(APIView):
 
 class SurveyRetrieveUpdateDeleteView(APIView):
     permission_classes = [permissions.IsAuthenticated]
-
-    @extend_schema(summary="Получение деталей опроса", responses={200: SurveyDetailSerializer}, tags=tag)
-    def get(self, request, survey_id: int):
-        survey = get_object_or_404(Surveys, pk=survey_id)
-        return Response(SurveyDetailSerializer(survey).data, status=status.HTTP_200_OK)
 
     @extend_schema(summary="Редактирование опроса", request=SurveyUpdateSerializer,
                    responses={200: SurveyDetailSerializer}, tags=tag)
@@ -440,15 +436,31 @@ class MySurveyProgressView(APIView):
 class SurveyProgressUpdateView(APIView):
     """
     Обновить или создать статус опроса для респондента.
+    Если статус изменяется на 'completed', можно указать оценку (`score`).
     """
     permission_classes = [permissions.IsAuthenticated]
 
     @extend_schema(
         summary="Изменить/создать статус опроса (пройден/в процессе)",
+        description=(
+            "Позволяет пользователю обновить статус прохождения опроса.\n\n"
+            "**Пример:**\n"
+            "- Если статус `in_progress` — обновляется только состояние.\n"
+            "- Если статус `completed` — необходимо (или можно) добавить поле `score` (0.0–1.0)."
+        ),
         request=inline_serializer(
             name="SurveyProgressUpdateRequest",
             fields={
-                'status': serializers.ChoiceField(choices=['in_progress', 'completed'])
+                'status': serializers.ChoiceField(
+                    choices=['in_progress', 'completed'],
+                    help_text="Статус прохождения опроса ('in_progress' или 'completed')"
+                ),
+                'score': serializers.FloatField(
+                    required=False,
+                    min_value=0.0,
+                    max_value=1.0,
+                    help_text="Оценка прохождения (0.0–1.0), требуется при статусе 'completed'"
+                )
             }
         ),
         responses={200: RespondentSurveyStatusSerializer},
@@ -459,16 +471,41 @@ class SurveyProgressUpdateView(APIView):
         survey = get_object_or_404(Surveys, pk=survey_id)
 
         status_value = request.data.get('status')
+        score_value = request.data.get('score')
+
+        # Проверка допустимости статуса
         if status_value not in dict(RespondentSurveyStatus.STATUS_CHOICES):
             return Response({"detail": "Недопустимый статус"}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Если статус "completed", проверяем наличие оценки
+        if status_value == 'completed':
+            if score_value is None:
+                return Response(
+                    {"detail": "Поле 'score' обязательно при статусе 'completed'"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            try:
+                score_value = float(score_value)
+                if not (0.0 <= score_value <= 1.0):
+                    raise ValueError
+            except ValueError:
+                return Response(
+                    {"detail": "Оценка должна быть числом от 0.0 до 1.0"},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        else:
+            # Для статуса "in_progress" оценка сбрасывается
+            score_value = None
+
+        # Обновление или создание записи
         record, created = RespondentSurveyStatus.objects.update_or_create(
             respondent=user,
             survey=survey,
-            defaults={'status': status_value}
+            defaults={'status': status_value, 'score': score_value}
         )
 
-        print(f"🔄 [{user}] {'Создан' if created else 'Обновлён'} статус: {survey.name} → {status_value}")
+        action = "Создан" if created else "Обновлён"
+        print(f"🔄 [{user}] {action} статус: {survey.name} → {status_value} (оценка: {score_value})")
 
         serializer = RespondentSurveyStatusSerializer(record)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -579,3 +616,96 @@ class RespondentAnswerDetailView(APIView):
 
         serializer = RespondentAnswerDetailSerializer(answer)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SurveyAddCharacteristicView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Добавить характеристику к опросу",
+        description="Создаёт одну связь между опросом и характеристикой с возможным описанием требований.",
+        request=inline_serializer(
+            name="SurveyAddCharacteristicRequest",
+            fields={
+                "characteristic_id": serializers.IntegerField(),
+                "requirements": serializers.CharField(allow_blank=True, required=False)
+            }
+        ),
+        responses={201: SurveyRequiredCharacteristicSerializer},
+        tags=tag
+    )
+    def post(self, request, survey_id: int):
+        survey = get_object_or_404(Surveys, pk=survey_id)
+        if not (survey.creator == request.user or request.user.role in ["moderator"]):
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+
+        char_id = request.data.get("characteristic_id")
+        requirements = request.data.get("requirements", "")
+
+        if not isinstance(char_id, int):
+            return Response({"detail": "characteristic_id должен быть числом."}, status=status.HTTP_400_BAD_REQUEST)
+
+        obj, created = SurveyRequiredCharacteristics.objects.get_or_create(
+            survey=survey,
+            characteristic_id=char_id,
+            defaults={"requirements": requirements}
+        )
+        if not created:
+            return Response({"detail": "Эта характеристика уже добавлена."}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(SurveyRequiredCharacteristicSerializer(obj).data, status=status.HTTP_201_CREATED)
+
+
+class SurveyCharacteristicsListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Получить все характеристики опроса",
+        description="Возвращает список всех характеристик, связанных с данным опросом.",
+        responses={200: SurveyRequiredCharacteristicSerializer(many=True)},
+        tags=tag
+    )
+    def get(self, request, survey_id: int):
+        survey = get_object_or_404(Surveys, pk=survey_id)
+        links = SurveyRequiredCharacteristics.objects.filter(survey=survey)
+        serializer = SurveyRequiredCharacteristicSerializer(links, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class SurveyEditCharacteristicView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Редактировать требования характеристики в опросе",
+        request=inline_serializer(
+            name="SurveyEditCharacteristicRequest",
+            fields={"requirements": serializers.CharField(allow_blank=True)}
+        ),
+        responses={200: SurveyRequiredCharacteristicSerializer},
+        tags=tag
+    )
+    def put(self, request, survey_id: int, link_id: int):
+        link = get_object_or_404(SurveyRequiredCharacteristics, pk=link_id, survey_id=survey_id)
+        if not (link.survey.creator == request.user or request.user.role in ["moderator"]):
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+
+        link.requirements = request.data.get("requirements", "")
+        link.save()
+        return Response(SurveyRequiredCharacteristicSerializer(link).data, status=status.HTTP_200_OK)
+
+
+class SurveyDeleteCharacteristicView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Удалить характеристику из опроса",
+        responses={204: None},
+        tags=tag
+    )
+    def delete(self, request, survey_id: int, link_id: int):
+        link = get_object_or_404(SurveyRequiredCharacteristics, pk=link_id, survey_id=survey_id)
+        if not (link.survey.creator == request.user or request.user.role in ["moderator"]):
+            return Response({"detail": "Недостаточно прав."}, status=status.HTTP_403_FORBIDDEN)
+
+        link.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)

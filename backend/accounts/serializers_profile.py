@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import Users, Characteristics, CharacteristicValues, RespondentCharacteristics
-
+from django.db import transaction
 
 class UserMeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -52,14 +52,8 @@ class CharacteristicSerializer(serializers.ModelSerializer):
         return data
 
 
-class RespondentCharacteristicSerializer(serializers.ModelSerializer):
-    characteristic_id = serializers.IntegerField(source='characteristic_value.characteristic.characteristic_id', read_only=True)
-    characteristic_name = serializers.CharField(source='characteristic_value.characteristic.name', read_only=True)
-    value = serializers.CharField(source='characteristic_value.value_text')
-
-    class Meta:
-        model = RespondentCharacteristics
-        fields = ['characteristic_id', 'characteristic_name', 'value']
+class RespondentCharacteristicListSerializer(serializers.ListSerializer):
+    """✅ Кастомный ListSerializer с поддержкой batch create_or_update"""
 
     def create_or_update(self, user, data):
         for item in data:
@@ -94,4 +88,78 @@ class RespondentCharacteristicSerializer(serializers.ModelSerializer):
             RespondentCharacteristics.objects.update_or_create(
                 user=user, characteristic_value=value_obj
             )
+
         return RespondentCharacteristics.objects.filter(user=user)
+
+
+class RespondentCharacteristicSerializer(serializers.ModelSerializer):
+    """🧩 Исправленный сериализатор для добавления/обновления характеристик пользователя"""
+    characteristic_id = serializers.IntegerField(write_only=True)
+    value = serializers.CharField(write_only=True)
+
+    characteristic_name = serializers.CharField(
+        source='characteristic_value.characteristic.name',
+        read_only=True
+    )
+    value_text = serializers.CharField(
+        source='characteristic_value.value_text',
+        read_only=True
+    )
+
+    class Meta:
+        model = RespondentCharacteristics
+        fields = ['characteristic_id', 'value', 'characteristic_name', 'value_text']
+
+    def to_representation(self, instance):
+        """⚙️ Преобразование модели → JSON"""
+        char = instance.characteristic_value.characteristic
+        return {
+            'characteristic_id': char.characteristic_id,
+            'characteristic_name': char.name,
+            'value': instance.characteristic_value.value_text
+        }
+
+    # ✅ Добавляем метод create_or_update
+    @staticmethod
+    @transaction.atomic
+    def create_or_update(user, validated_data_list):
+        """
+        Создание или обновление характеристик пользователя.
+        Если такая характеристика уже есть — обновляем значение.
+        """
+        from accounts.models import CharacteristicValues  # импорт здесь для избежания циклических зависимостей
+
+        for data in validated_data_list:
+            characteristic_id = data.get('characteristic_id')
+            value_text = data.get('value')
+
+            try:
+                characteristic = Characteristics.objects.get(pk=characteristic_id)
+            except Characteristics.DoesNotExist:
+                print(f"⚠️ Характеристика ID={characteristic_id} не найдена — пропуск.")
+                continue
+
+            # Проверяем, существует ли значение с таким текстом
+            value_obj, _ = CharacteristicValues.objects.get_or_create(
+                characteristic=characteristic,
+                value_text=value_text
+            )
+
+            # Проверяем, есть ли у пользователя уже запись с этой характеристикой
+            existing = RespondentCharacteristics.objects.filter(
+                user=user,
+                characteristic_value__characteristic=characteristic
+            ).first()
+
+            if existing:
+                # Обновляем значение
+                existing.characteristic_value = value_obj
+                existing.save()
+                print(f"🔄 Обновлена характеристика пользователя ({user.id}): {characteristic.name} → {value_text}")
+            else:
+                # Создаём новую запись
+                RespondentCharacteristics.objects.create(
+                    user=user,
+                    characteristic_value=value_obj
+                )
+                print(f"🆕 Добавлена новая характеристика пользователю ({user.id}): {characteristic.name} = {value_text}")

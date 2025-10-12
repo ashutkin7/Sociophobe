@@ -8,7 +8,11 @@ from .views import (
     SurveyToggleStatusView, AvailableSurveysView,
     ExportSurveyQuestionsView, ImportSurveyQuestionsView,
     MySurveyProgressView, SurveyProgressUpdateView,
-    RespondentSurveyAnswersView, RespondentAnswerDetailView
+    RespondentSurveyAnswersView, RespondentAnswerDetailView,
+    SurveyAddCharacteristicView,
+    SurveyCharacteristicsListView,
+    SurveyEditCharacteristicView,
+    SurveyDeleteCharacteristicView
 )
 
 urlpatterns = [
@@ -24,6 +28,14 @@ urlpatterns = [
     path('my-progress/', MySurveyProgressView.as_view(), name='my-survey-progress'),
     path('<int:survey_id>/progress/', SurveyProgressUpdateView.as_view(), name='survey-progress-update'),
     path('respondent/<int:survey_id>/answers/', RespondentSurveyAnswersView.as_view(), name='respondent-survey-answers'),
+    path('<int:survey_id>/characteristics/add/', SurveyAddCharacteristicView.as_view(),
+         name='survey-add-characteristic'),
+    path('<int:survey_id>/characteristics/', SurveyCharacteristicsListView.as_view(),
+         name='survey-characteristics-list'),
+    path('<int:survey_id>/characteristics/<int:link_id>/edit/', SurveyEditCharacteristicView.as_view(),
+         name='survey-edit-characteristic'),
+    path('<int:survey_id>/characteristics/<int:link_id>/delete/', SurveyDeleteCharacteristicView.as_view(),
+         name='survey-delete-characteristic'),
 
 
     # --- Questions ---
