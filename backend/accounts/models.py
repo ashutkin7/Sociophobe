@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
-
+from django.dispatch import receiver
+from django.db.models.signals import post_migrate
 
 class UsersManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
@@ -114,3 +115,80 @@ class RespondentCharacteristics(models.Model):
     def __str__(self):
         return f"{self.user.email} → {self.characteristic_value} ({self.score})"
 
+# ============================================================
+# 🔹 Автозаполнение таблицы характеристик после миграции
+# ============================================================
+@receiver(post_migrate)
+def create_default_characteristics(sender, **kwargs):
+    """
+    Автоматически создаёт стандартные характеристики, если их нет в БД.
+    Формат requirements:
+      - для choice: варианты через запятую
+      - для numeric: минимум,максимум
+    """
+    if sender.name not in ['accounts', 'analytics']:
+        return
+
+    defaults = [
+        {
+            "name": "Возраст",
+            "value_type": "numeric",
+            "requirements": "10,100",  # минимальный и максимальный возраст
+        },
+        {
+            "name": "Пол",
+            "value_type": "choice",
+            "requirements": "Мужской,Женский,Другое",  # варианты выбора
+        },
+        {
+            "name": "Город",
+            "value_type": "string",
+            "requirements": "",  # свободный ввод
+        },
+        {
+            "name": "Образование",
+            "value_type": "choice",
+            "requirements": "Среднее,Среднее специальное,Высшее,Магистр,Кандидат наук,Доктор наук",
+        },
+        {
+            "name": "Профессия",
+            "value_type": "string",
+            "requirements": "",
+        },
+        {
+            "name": "Доход",
+            "value_type": "numeric",
+            "requirements": "0,1000000",  # диапазон дохода в рублях
+        },
+        {
+            "name": "Семейное положение",
+            "value_type": "choice",
+            "requirements": "Холост,Женат,Разведён,В отношениях",
+        },
+        {
+            "name": "Опыт работы",
+            "value_type": "numeric",
+            "requirements": "0,50",  # количество лет опыта
+        },
+        {
+            "name": "Уровень удовлетворенности жизнью",
+            "value_type": "numeric",
+            "requirements": "1,10",  # шкала от 1 до 10
+        },
+        {
+            "name": "Наличие детей",
+            "value_type": "choice",
+            "requirements": "Да,Нет",
+        },
+    ]
+
+    for item in defaults:
+        obj, created = Characteristics.objects.get_or_create(
+            name=item["name"],
+            defaults={
+                "value_type": item["value_type"],
+                "requirements": item["requirements"],
+            },
+        )
+        if created:
+            print(f"[INIT] ✅ Добавлена характеристика: {obj.name}")

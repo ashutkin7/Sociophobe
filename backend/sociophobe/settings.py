@@ -73,6 +73,8 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'surveys',
     'AI',
+    'payments',
+    'analytics'
 ]
 
 MIDDLEWARE = [
