@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-1ndrjm7i72by3z78+(jz(9zh3(j4v_ryl7$zc^av07gex9de!3
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['http://31.128.37.219:8000']
 
 
 from datetime import timedelta
@@ -110,7 +110,7 @@ INSTALLED_APPS += ['corsheaders']
 MIDDLEWARE.insert(0, 'corsheaders.middleware.CorsMiddleware')
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    'http://31.128.37.219:8000',   # ваш vite dev server
+    'http://localhost:5173',   # ваш vite dev server
 ]
 CORS_ALLOW_HEADERS = [
     'content-type',
