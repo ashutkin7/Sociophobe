@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-1ndrjm7i72by3z78+(jz(9zh3(j4v_ryl7$zc^av07gex9de!3
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['http://31.128.37.219:8000']
+ALLOWED_HOSTS = ['31.128.37.219']
 
 
 from datetime import timedelta
