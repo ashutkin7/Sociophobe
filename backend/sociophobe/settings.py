@@ -110,7 +110,7 @@ INSTALLED_APPS += ['corsheaders']
 MIDDLEWARE.insert(0, 'corsheaders.middleware.CorsMiddleware')
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGINS = [
-    'http://localhost:5173',   # ваш vite dev server
+    'http://31.128.37.219:8000',   # ваш vite dev server
 ]
 CORS_ALLOW_HEADERS = [
     'content-type',
