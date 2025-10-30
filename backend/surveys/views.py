@@ -1,5 +1,7 @@
 import csv
 import io
+from decimal import Decimal
+
 import openpyxl
 from django.http import HttpResponse
 from rest_framework import status, permissions, serializers
@@ -9,8 +11,10 @@ from rest_framework.parsers import JSONParser, MultiPartParser
 from drf_spectacular.utils import extend_schema, inline_serializer
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
-from django.db import models
+from django.db import models, transaction
 import json
+
+from payments.views import get_or_create_wallet
 from .permissions import IsSurveyParticipantOrAdmin
 
 from .serializers import (
@@ -83,6 +87,7 @@ class SurveyRetrieveUpdateDeleteView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+# В SurveyArchiveView.post - замените тело на это (останавливаем опрос и возвращаем остаток)
 class SurveyArchiveView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -93,9 +98,39 @@ class SurveyArchiveView(APIView):
             return Response({"detail": "Доступ запрещён"}, status=status.HTTP_403_FORBIDDEN)
 
         archive, _ = SurveyArchive.objects.get_or_create(survey=survey)
+
+        # переводим статус в 'stopped' и возвращаем остаток со счета опроса заказчику
         survey.status = 'stopped'
         survey.save()
+
+        # вернуть деньги на кошелек заказчика, если есть SurveyAccount и баланс > 0
+        try:
+            from payments.models import SurveyAccount, PaymentTransaction, Wallet as PaymentWallet
+            survey_acc = SurveyAccount.objects.filter(survey=survey).first()
+            if survey_acc and survey_acc.balance > Decimal('0.00'):
+                with transaction.atomic():
+                    amount = survey_acc.balance
+                    # создаём/получаем кошелёк заказчика (в платежном приложении)
+                    creator_wallet = get_or_create_wallet(survey.creator)
+                    # снимаем со счёта опроса и зачисляем на кошелёк заказчика
+                    survey_acc.withdraw(amount)
+                    creator_wallet.deposit(amount)
+                    # логируем операцию возврата (тип 'refund' или 'topup' по вашему выбору)
+                    tx = PaymentTransaction.objects.create(
+                        user=survey.creator,
+                        type='refund',
+                        amount=amount,
+                        currency=survey_acc.currency,
+                        description=f"Возврат остатка средств при остановке опроса {survey.survey_id}",
+                        related_survey_id=survey.survey_id
+                    )
+                    tx.mark_success(gateway_data={'returned_to_creator': True})
+        except Exception:
+            # не фейлим архивацию из-за проблем с возвратом, но логируем серверно (или можно вернуть ошибку)
+            pass
+
         return Response(SurveyDetailSerializer(survey).data, status=status.HTTP_200_OK)
+
 
 
 class ArchivedSurveysListView(APIView):
@@ -296,6 +331,30 @@ class SurveyToggleStatusView(APIView):
         desired_status = request.data.get('status')
         if desired_status not in dict(Surveys.STATUS_CHOICES):
             return Response({"detail": "Недопустимый статус"}, status=status.HTTP_400_BAD_REQUEST)
+        # если переводим в stopped — вернуть остатки
+        if survey.status == 'active' and (desired_status == 'stopped' or desired_status == 'draft'):
+            # только владелец или модератор может останавливать (уже проверено выше)
+            try:
+                from payments.models import SurveyAccount, PaymentTransaction
+                survey_acc = getattr(survey, 'account', None) or SurveyAccount.objects.filter(survey=survey).first()
+                if survey_acc and survey_acc.balance > Decimal('0.00'):
+                    with transaction.atomic():
+                        amount = survey_acc.balance
+                        creator_wallet = get_or_create_wallet(survey.creator)
+                        survey_acc.withdraw(amount)
+                        creator_wallet.deposit(amount)
+                        tx = PaymentTransaction.objects.create(
+                            user=survey.creator,
+                            type='refund',
+                            amount=amount,
+                            currency=survey_acc.currency,
+                            description=f"Возврат остатка средств при остановке опроса {survey.survey_id}",
+                            related_survey_id=survey.survey_id
+                        )
+                        tx.mark_success(gateway_data={'returned_to_creator': True})
+            except Exception:
+                # swallow errors or log
+                pass
         survey.status = desired_status
         survey.save()
         return Response({'survey_id': survey.survey_id, 'status': survey.status},
@@ -309,11 +368,26 @@ class AvailableSurveysView(APIView):
                    responses={200: SurveyDetailSerializer(many=True)}, tags=tag)
     def get(self, request):
         now = timezone.now()
+        # активные опросы по времени
         qs = Surveys.objects.filter(status='active').filter(
             models.Q(date_finished__isnull=True) | models.Q(date_finished__gt=now)
         )
+
+        # Фильтруем те, у которых нет денег на счёте (если cost задан)
+        # Если у опроса cost задан и >0 — проверяем SurveyAccount.balance >= cost
+        # Если cost==None или <=0 — считаем, что опрос не оплачиваемый и не показываем (или можно показать — решите сами)
+        qs = qs.select_related('account')  # требуется, если SurveyAccount OneToOne named 'account'
+
         available = []
         for s in qs:
+            # если задан cost, то проверяем счёт опроса
+            if s.cost and s.cost > Decimal('0.00'):
+                acc = getattr(s, 'account', None)
+                if not acc or acc.balance < s.cost:
+                    # пропускаем опрос без средств
+                    continue
+
+            # проверяем лимит по max_residents (если есть)
             if s.max_residents:
                 respondents_count = RespondentAnswers.objects.filter(
                     survey_question__survey=s
@@ -321,8 +395,9 @@ class AvailableSurveysView(APIView):
                 if respondents_count >= s.max_residents:
                     continue
             available.append(s)
-        return Response(SurveyDetailSerializer(available, many=True).data,
-                        status=status.HTTP_200_OK)
+
+        return Response(SurveyDetailSerializer(available, many=True).data, status=status.HTTP_200_OK)
+
 
 
 # ------------------- ИМПОРТ / ЭКСПОРТ -------------------

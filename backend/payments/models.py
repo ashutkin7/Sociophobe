@@ -3,6 +3,8 @@ from django.db import models, transaction
 from django.conf import settings
 from django.utils import timezone
 from decimal import Decimal
+from django.db.models.signals import post_migrate
+from django.dispatch import receiver
 
 
 class Payment(models.Model):
@@ -188,3 +190,94 @@ class PaymentTransaction(models.Model):
 
     def __str__(self):
         return f"Transaction {self.transaction_id}: {self.type} {self.amount} {self.currency} [{self.status}]"
+
+# в payments/models.py (в начало файла импортировать Decimal, models и т.д.)
+
+class PricingTier(models.Model):
+    """
+    Тариф на оплату за один пройденный опрос в зависимости от количества вопросов.
+    min_questions и max_questions включительно.
+    Если max_questions is None => диапазон "и больше".
+    """
+    id = models.AutoField(primary_key=True)
+    min_questions = models.PositiveIntegerField()
+    max_questions = models.PositiveIntegerField(null=True, blank=True)
+    price_per_survey = models.DecimalField(max_digits=10, decimal_places=2)
+
+    class Meta:
+        db_table = 'payment_pricing_tier'
+        ordering = ['min_questions']
+
+    def clean(self):
+        # Проверки на логичность: min <= max (если max задан)
+        from django.core.exceptions import ValidationError
+        if self.max_questions is not None and self.min_questions > self.max_questions:
+            raise ValidationError("min_questions не может быть больше max_questions")
+
+    def save(self, *args, **kwargs):
+        # валидация перекрытий
+        from django.core.exceptions import ValidationError
+        self.clean()
+
+        # собираем все остальные уровни
+        qs = PricingTier.objects.all()
+        if self.pk:
+            qs = qs.exclude(pk=self.pk)
+        for other in qs:
+            a_min, a_max = self.min_questions, self.max_questions
+            b_min, b_max = other.min_questions, other.max_questions
+            # приводим None к +inf при сравнении
+            a_max_cmp = float('inf') if a_max is None else a_max
+            b_max_cmp = float('inf') if b_max is None else b_max
+            # Проверяем пересечение интервалов
+            if not (a_max_cmp < b_min or b_max_cmp < a_min):
+                raise ValidationError(f"Диапазон пересекается с существующим: {other.min_questions}-{other.max_questions or '∞'}")
+        super().save(*args, **kwargs)
+
+
+
+class SurveyAccount(models.Model):
+    id = models.AutoField(primary_key=True)
+    survey = models.OneToOneField(Surveys, on_delete=models.CASCADE, related_name='account')
+    balance = models.DecimalField(max_digits=12, decimal_places=2, default=Decimal('0.00'))
+    currency = models.CharField(max_length=10, default='RUB')
+
+    class Meta:
+        db_table = 'survey_account'
+
+    def deposit(self, amount: Decimal):
+        from django.db import transaction
+        with transaction.atomic():
+            sa = SurveyAccount.objects.select_for_update().get(pk=self.pk)
+            sa.balance = sa.balance + Decimal(amount)
+            sa.save()
+            return sa
+
+    def withdraw(self, amount: Decimal):
+        from django.db import transaction
+        with transaction.atomic():
+            sa = SurveyAccount.objects.select_for_update().get(pk=self.pk)
+            if sa.balance < Decimal(amount):
+                raise ValueError("Insufficient funds in survey account")
+            sa.balance = sa.balance - Decimal(amount)
+            sa.save()
+            return sa
+
+@receiver(post_migrate)
+def create_default_pricing(sender, **kwargs):
+    if sender.name != 'payments':
+        return
+    from .models import PricingTier
+    defaults = [
+        {"min_questions": 1, "max_questions": 20, "price_per_survey": Decimal('30.00')},
+        {"min_questions": 21, "max_questions": 100, "price_per_survey": Decimal('50.00')},
+        {"min_questions": 101, "max_questions": None, "price_per_survey": Decimal('100.00')},
+    ]
+    for d in defaults:
+        obj, created = PricingTier.objects.get_or_create(
+            min_questions=d['min_questions'],
+            max_questions=d['max_questions'],
+            defaults={"price_per_survey": d['price_per_survey']}
+        )
+        if created:
+            print(f"[INIT] Добавлен тариф: {obj.min_questions} - {obj.max_questions or '∞'} => {obj.price_per_survey}")
