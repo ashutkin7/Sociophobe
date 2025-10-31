@@ -18,7 +18,7 @@ load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
-
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 sys.path.insert(0, os.path.join(BASE_DIR, 'backend'))
 
 
@@ -31,7 +31,7 @@ SECRET_KEY = 'django-insecure-1ndrjm7i72by3z78+(jz(9zh3(j4v_ryl7$zc^av07gex9de!3
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['31.128.37.219']
+ALLOWED_HOSTS = ['31.128.37.219','localhost']
 
 
 from datetime import timedelta
