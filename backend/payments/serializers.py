@@ -62,3 +62,32 @@ class SurveyTopUpSerializer(serializers.Serializer):
     amount = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
     payment_token = serializers.CharField(required=False, allow_blank=True)
     description = serializers.CharField(required=False, allow_blank=True)
+
+class PricingTierSerializer(serializers.Serializer):
+    """
+    Сериализатор для просмотра/редактирования тарифов (PricingTier).
+    """
+    id = serializers.IntegerField(read_only=True)
+    min_questions = serializers.IntegerField()
+    max_questions = serializers.IntegerField(allow_null=True, required=False)
+    price_per_survey = serializers.DecimalField(max_digits=10, decimal_places=2, min_value=Decimal('0.00'))
+
+    def create(self, validated_data):
+        from .models import PricingTier
+        return PricingTier.objects.create(**validated_data)
+
+    def update(self, instance, validated_data):
+        instance.min_questions = validated_data.get('min_questions', instance.min_questions)
+        instance.max_questions = validated_data.get('max_questions', instance.max_questions)
+        instance.price_per_survey = validated_data.get('price_per_survey', instance.price_per_survey)
+        instance.save()
+        return instance
+
+    def validate(self, data):
+        # минимальная валидация: min_questions <= max_questions (если max задан)
+        min_q = data.get('min_questions')
+        max_q = data.get('max_questions')
+        if max_q is not None and min_q is not None and min_q > max_q:
+            raise serializers.ValidationError("min_questions не может быть больше max_questions")
+        return data
+

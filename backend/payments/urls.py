@@ -2,7 +2,7 @@
 from django.urls import path
 from .views import (
     TopUpView, WithdrawView, PayoutView, WalletView, TransactionsListView,
-    CalculateCostView, TopUpSurveyView
+    CalculateCostView, TopUpSurveyView, PricingTierListView, PricingTierDetailView
 )
 
 urlpatterns = [
@@ -13,4 +13,6 @@ urlpatterns = [
     path('calc-cost/', CalculateCostView.as_view(), name='payments-calc-cost'),
     path('wallet/', WalletView.as_view(), name='payments-wallet'),
     path('transactions/', TransactionsListView.as_view(), name='payments-transactions'),
+    path('pricing-tiers/', PricingTierListView.as_view(), name='payments-pricing-tiers'),
+    path('pricing-tier/<int:pk>/', PricingTierDetailView.as_view(), name='payments-pricing-tier-detail'),
 ]

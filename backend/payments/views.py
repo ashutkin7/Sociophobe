@@ -9,7 +9,8 @@ from rest_framework import status, permissions
 from drf_spectacular.utils import extend_schema, inline_serializer, OpenApiResponse
 from .serializers import (
     TopUpSerializer, WithdrawSerializer, PayoutSerializer,
-    WalletSerializer, TransactionSerializer, CalculateCostSerializer, SurveyTopUpSerializer
+    WalletSerializer, TransactionSerializer, CalculateCostSerializer, SurveyTopUpSerializer,
+    PricingTierSerializer
 )
 from .models import Wallet, PaymentTransaction, PricingTier, SurveyAccount
 from surveys.models import Surveys, RespondentSurveyStatus,SurveyQuestions
@@ -483,3 +484,69 @@ class TopUpSurveyView(APIView):
 
         return Response({'survey_id': survey.survey_id, 'new_balance': str(survey_acc.balance)},
                         status=status.HTTP_200_OK)
+
+class PricingTierListView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Список тарифов (PricingTier) — доступно модератору/админу",
+        responses={200: PricingTierSerializer(many=True)},
+        tags=['Платежи']
+    )
+    def get(self, request):
+        # Только авторизованные пользователи, но список можно показать всем авторизованным;
+        # если нужно — ограничить только модераторам, добавьте проверку роли здесь.
+        tiers = PricingTier.objects.all().order_by('min_questions')
+        return Response(PricingTierSerializer(tiers, many=True).data, status=status.HTTP_200_OK)
+
+
+class PricingTierDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @extend_schema(
+        summary="Получить тариф (только модератор может изменять)",
+        request=PricingTierSerializer,
+        responses={200: PricingTierSerializer},
+        tags=['Платежи']
+    )
+    def get(self, request, pk: int):
+        tier = get_object_or_404(PricingTier, pk=pk)
+        return Response(PricingTierSerializer(tier).data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="изменить тариф (только модератор может изменять)",
+        request=PricingTierSerializer,
+        responses={200: PricingTierSerializer},
+        tags=['Платежи']
+    )
+    def post(self, request, pk: int):
+        # Только модератор может изменять тарифы
+        if getattr(request.user, 'role', None) != 'moderator':
+            return Response({'detail': 'Доступ запрещён'}, status=status.HTTP_403_FORBIDDEN)
+
+        tier = get_object_or_404(PricingTier, pk=pk)
+        serializer = PricingTierSerializer(tier, data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # минимально: обновляем и возвращаем
+        with transaction.atomic():
+            serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="изменить тариф (только модератор может изменять)",
+        request=PricingTierSerializer,
+        responses={200: PricingTierSerializer},
+        tags=['Платежи']
+    )
+    def patch(self, request, pk: int):
+        # поддерживаем частичное обновление (например, только price_per_survey)
+        if getattr(request.user, 'role', None) != 'moderator':
+            return Response({'detail': 'Доступ запрещён'}, status=status.HTTP_403_FORBIDDEN)
+
+        tier = get_object_or_404(PricingTier, pk=pk)
+        serializer = PricingTierSerializer(tier, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            serializer.save()
+        return Response(serializer.data, status=status.HTTP_200_OK)
